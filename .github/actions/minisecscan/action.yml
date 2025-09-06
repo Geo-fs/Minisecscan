@@ -1,0 +1,73 @@
+name: MiniSecScan
+description: Fast passive web security lint (headers, forms, mixed content) with scorecard
+author: you
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  url:
+    description: "Public URL to scan (e.g. a preview deploy)"
+    required: false
+  file:
+    description: "Local HTML file to scan instead of a URL"
+    required: false
+  min_score:
+    description: "Fail if score is below this number (0-100)"
+    required: false
+    default: "75"
+  fail_on:
+    description: "Fail on severity >= this level [NONE|LOW|MEDIUM|HIGH]"
+    required: false
+    default: "HIGH"
+  output_json:
+    description: "Path to write JSON report"
+    required: false
+    default: "minisecscan-report.json"
+
+outputs:
+  score:
+    description: "Final score (0-100)"
+  grade:
+    description: "Letter grade (A/B/C/D)"
+  findings:
+    description: "Total finding count"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install deps
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r $GITHUB_ACTION_PATH/requirements.txt
+
+    - name: Run MiniSecScan
+      id: run
+      shell: bash
+      run: |
+        python "$GITHUB_ACTION_PATH/run.py" \
+          --url "${{ inputs.url }}" \
+          --file "${{ inputs.file }}" \
+          --min-score "${{ inputs.min_score }}" \
+          --fail-on "${{ inputs.fail_on }}" \
+          --out "${{ inputs.output_json }}"
+
+    - name: Set outputs
+      id: set-outputs
+      shell: bash
+      run: |
+        echo "score=$(jq -r .score '${{ inputs.output_json }}')" >> $GITHUB_OUTPUT
+        echo "grade=$(jq -r .grade '${{ inputs.output_json }}')" >> $GITHUB_OUTPUT
+        echo "findings=$(jq -r '.findings | length' '${{ inputs.output_json }}')" >> $GITHUB_OUTPUT
+
+    - name: Upload report artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: minisecscan-report
+        path: ${{ inputs.output_json }}
