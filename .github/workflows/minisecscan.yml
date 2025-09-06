@@ -1,0 +1,68 @@
+name: MiniSecScan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Example: supply a preview URL via label, env, or secret. Replace this.
+      - name: Decide target URL
+        id: target
+        run: |
+          # Set your preview URL here. Could be env, PR comment trigger, etc.
+          echo "url=https://example.com" >> $GITHUB_OUTPUT
+
+      - name: MiniSecScan
+        id: scan
+        uses: ./.github/actions/minisecscan
+        with:
+          url: ${{ steps.target.outputs.url }}
+          # file: ./dist/index.html          # alternative if scanning a local file
+          min_score: 75
+          fail_on: HIGH
+          output_json: minisecscan-report.json
+
+      - name: Read JSON for comment
+        id: read
+        run: |
+          echo "score=$(jq -r .score minisecscan-report.json)" >> $GITHUB_OUTPUT
+          echo "grade=$(jq -r .grade minisecscan-report.json)" >> $GITHUB_OUTPUT
+          echo "count=$(jq '.findings | length' minisecscan-report.json)" >> $GITHUB_OUTPUT
+          # Build a short markdown table of top 5 findings
+          echo 'table<<EOF' >> $GITHUB_OUTPUT
+          jq -r '
+            .findings[:5] |
+            (["Severity","Title","Remediation"] | @tsv),
+            (.[] | [ .severity, .title, .remediation ] | @tsv)
+          ' minisecscan-report.json | awk 'BEGIN{print "|Severity|Title|Remediation|\n|---|---|---|"} {gsub("\t","|"); print "|" $0 "|"}' >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `
+            ## 🛡️ MiniSecScan
+            **Target:** ${process.env.TARGET_URL || '${{ steps.target.outputs.url }}'}
+
+            **Score:** **${{ steps.read.outputs.score }}** (**${{ steps.read.outputs.grade }}**)  
+            **Findings:** ${{ steps.read.outputs.count }}
+
+            ${'${{ steps.read.outputs.table }}'}
+
+            _Full JSON report uploaded as an artifact (minisecscan-report.json)._`;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            })
